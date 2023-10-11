@@ -1,0 +1,32 @@
+{
+    "root_path":"/scratch/gilbreth/abdulsal/EBM-Analysis/",  
+    "num_train_iters":10000,
+    "logging_freq": 100,
+    "long_run_freq":1000,
+    "reset":"True",
+
+    "comment": "Data Configuration",
+    "data":"mnist",
+    "im_sz": 32,
+    "im_ch": 1,
+    "batch_size":64,
+    "data_noise":3e-2,
+
+    "comment": "Model Name",
+    "model":"VanillaNet_2",
+
+    "comment": "Langevin Dynamics Parameters",
+    "init":"noise",
+    "L":100,
+    "T":5e-5,
+    "eps":1,
+    "MH":"True",
+    "transition_steps":200,
+    "Long_L":10000,
+
+    "comment": "loss function",
+    "scale_loss":"False"
+
+    
+}
+
