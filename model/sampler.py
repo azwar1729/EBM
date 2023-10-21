@@ -90,7 +90,7 @@ def sample_HMC(q, model,Leapfrog_steps=3,HMC_steps=100,eps=0.01,gamma=0.9,mass=1
 
 
 
-def sample_Langevin(x, model,L=150,eps=1,T=5e-5,MH=False,transition_steps=100):
+def sample_Langevin(x, model,L=150,eps=1,T=5e-5,MH=False,transition_steps=100,ch=1):
     """
     L --> Total number of Langevin Iterations
     eps --> step size
@@ -138,7 +138,7 @@ def sample_Langevin(x, model,L=150,eps=1,T=5e-5,MH=False,transition_steps=100):
     
         x = x_star 
         if i%transition_steps==0:
-            transition.append(x.view(-1,1,32,32)[0])
+            transition.append(x.view(-1,ch,32,32))
     
     acceptance_components = np.array([acceptance_energy_term, acceptance_score_term])
     return x.detach(),acceptance_ratio, energy, score, acceptance_components,transition

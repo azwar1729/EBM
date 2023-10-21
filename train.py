@@ -32,13 +32,12 @@ from pathlib import Path
 from collections import OrderedDict
 from utils_jgm.tikz_pgf_helpers import tpl_save
 import utils
-import trial
 from tqdm import tqdm
 
-def train(config,root_path,resume_checkpoint=False):
+def train(root_path,resume_checkpoint=False):
     
     logger = utils.set_logger(root_path+"logging.log")
-    #logger.info("WORKING!!")
+    config = utils.read_json(root_path+"config.json")
     
     ########################  Get Data ###################################
     
@@ -47,28 +46,19 @@ def train(config,root_path,resume_checkpoint=False):
             'flowers': lambda path, func: datasets.ImageFolder(root=path, transform=func)}
 
     transform = tr.Compose([tr.Resize(config['im_sz']),
-                            tr.ToTensor()])
+                            tr.ToTensor(),
+                             tr.Normalize(tuple(0.5*t.ones(config['im_ch'])), tuple(0.5*t.ones(config['im_ch'])))])
     q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
-    
+    print(q.min(),q.max(),q.shape)
         
-    train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('./data',
-        train=True,
-        download = True,
-        transform = transforms.Compose(
-            [transforms.ToTensor(),
-            transforms.Resize(32)])
-        ),
-        batch_size=64
-    )
     #################### Intialize model/Optimizer #######################
-    if resume_checkpoint==False:
-        model = getattr(models,config['model'])(n_c=config['im_ch'])
-        model = model.cuda()
-        optimizer= optim.Adam(model.parameters(),lr=1e-4)
-        train_iter = 0
     
-    else:
+    model = getattr(models,config['model'])(n_c=config['im_ch'])
+    model = model.cuda()
+    optimizer= optim.Adam(model.parameters(),lr=1e-4)
+    train_iter = 0
+   
+    if resume_checkpoint==True:
         checkpoint = torch.load(root_path + f'/state.pth')
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -87,9 +77,9 @@ def train(config,root_path,resume_checkpoint=False):
         # Intialize starting point of the Langevin chain
         if config['init'] == "noise":
             x_init = torch.randn_like(x_data)
-        elif config['data'] == "data":
+        elif config['init'] == "data":
             x_init = x_data
-        elif config['data'] == "persistent":
+        elif config['init'] == "persistent":
             x_init = x_bank ## FILL IT LATER 
 
         # Set Temperature parameter as required
@@ -135,11 +125,11 @@ def train(config,root_path,resume_checkpoint=False):
               }, root_path + f'/state.pth')
         
         if ii%config["long_run_freq"]==0:
-            
-            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
         
             utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_{ii}.png")
-            utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
+            #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
+            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_{ii}.gif")
             utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_{ii}.png")
             utils.plot_lineplot(energy,root_path + f"energy_long_{ii}.png")
             utils.plot_lineplot(score,root_path + f"score_long_{ii}.png")
@@ -149,7 +139,7 @@ def train(config,root_path,resume_checkpoint=False):
 if __name__ == "__main__":
 
     config = utils.read_json('config.json')
-    params_list = ['T',"eps"]
+    params_list = ['T',"eps","MH"]
     root_path = config["root_path"]
     for param in params_list:
         root_path = root_path + param + "=" + str(config[param]) + "||"
@@ -164,7 +154,7 @@ if __name__ == "__main__":
 
     utils.copy_folders(['train.py','utils.py','config.json'],root_path)
     
-    train(config,root_path,False)
+    train(root_path,False)
     
     
     

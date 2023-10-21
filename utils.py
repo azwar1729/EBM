@@ -14,7 +14,7 @@ import shutil
 import os
 import torchvision.utils as vutils
 import torchvision as tv
-
+import imageio
 def set_logger(filename):
     
     logging.basicConfig(filename=filename,
@@ -27,10 +27,19 @@ def set_logger(filename):
     return logger
 
 
-def read_json(fname):
-    with open(fname, 'r') as file:
-        data = json.load(file)
-    return data
+def read_json(path):
+    try:
+        with open(path, 'r') as file:
+            data = json.load(file)
+            return data
+    except json.JSONDecodeError:
+        return {}
+
+def write_json(data_dict,path):
+    
+    with open(path, 'w') as json_file:
+        json.dump(data_dict, json_file, indent=4)    
+    return
 
 def copy_folders(src_list, dest_dir):
     """ Copy a list of directory and files to a given destination file """
@@ -75,10 +84,24 @@ def plot_transition_images(image_list,path):
     plt.savefig(path)
     plt.close()
 
+def tensor_to_image(tensor, n):
+    # Convert tensor to a grid of images
+    grid = vutils.make_grid(torch.clamp(tensor, 0, 1.), normalize=True, nrow=int(n))
+    # Convert grid to numpy array
+    grid_np = grid.mul(255).clamp(0, 255).byte().permute(1, 2, 0).cpu().numpy()
+    return grid_np
+
+def tensors_to_gif(tensor_list, n, gif_filename="transition.gif"):
+    images = []
+    for tensor in tensor_list:
+        img_np = tensor_to_image(tensor, n)
+        images.append(img_np)
+
+    imageio.mimsave(gif_filename, images, duration=0.5)
+            
 def plot_lineplot(input_list,path):
     
     plt.figure()
     plt.plot(input_list)
     plt.savefig(path)
     plt.close()
-
