@@ -70,6 +70,7 @@ def train(root_path,resume_checkpoint=False):
     for ii in range(train_iter,config['num_train_iters']):
     #for ii,data in enumerate(tqdm(train_loader)):
         # Get training data, reshape and add noise
+        logger.info(ii)
         x_data  = q[ torch.randperm(q.shape[0])[0:config['batch_size']] ] 
         x_data = x_data.reshape(x_data.shape[0],-1)
         x_data = x_data + config['data_noise'] * torch.randn_like(x_data)
@@ -89,13 +90,18 @@ def train(root_path,resume_checkpoint=False):
             T = torch.exp(model.log_T)
         elif not isinstance(config["T"],torch.Tensor):   # If Temperature is not tensor then convert to tensor
             T = t.tensor(config["T"])
-        
+            
         # Run Langevin Dynamics
-        x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_init, model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
-        
-        loss = model(x_data).mean() - model(x_sample).mean()
-        if config['scale_loss'] == "True" or isinstance(config["T"],str) == True:
+        if config['combined_loss'] == "True":
+            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(torch.randn_like(x_data), model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            x_sample_data_init,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            loss = (model(x_data).mean() - model(x_sample).mean()) + config['combined_loss_lambda']*(model(x_data).mean() - model(x_sample_data_init).mean())
             print("HERE")
+        
+        else:
+            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_init, model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            loss = model(x_data).mean() - model(x_sample).mean()
+        if config['scale_loss'] == "True" or isinstance(config["T"],str) == True:
             loss = loss / T
         
         optimizer.zero_grad()
@@ -127,12 +133,23 @@ def train(root_path,resume_checkpoint=False):
         if ii%config["long_run_freq"]==0:
             x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
         
-            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_{ii}.png")
+            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_DataInit_{ii}.png")
             #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
-            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_{ii}.gif")
-            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_{ii}.png")
-            utils.plot_lineplot(energy,root_path + f"energy_long_{ii}.png")
-            utils.plot_lineplot(score,root_path + f"score_long_{ii}.png")
+            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
+            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_DataInit_{ii}.png")
+            utils.plot_lineplot(energy,root_path + f"energy_long_DataInit_{ii}.png")
+            utils.plot_lineplot(score,root_path + f"score_long_DataInit_{ii}.png")
+            
+            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(torch.randn_like(x_data), model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
+        
+            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_NoiseInit_{ii}.png")
+            #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
+            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_NoiseInit_{ii}.gif")
+            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_NoiseInit_{ii}.png")
+            utils.plot_lineplot(energy,root_path + f"energy_long_NoiseInit_{ii}.png")
+            utils.plot_lineplot(score,root_path + f"score_long_NoiseInit_{ii}.png")
+            
+            
             
             
         

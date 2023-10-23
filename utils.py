@@ -97,7 +97,7 @@ def tensors_to_gif(tensor_list, n, gif_filename="transition.gif"):
         img_np = tensor_to_image(tensor, n)
         images.append(img_np)
 
-    imageio.mimsave(gif_filename, images, duration=0.5)
+    imageio.mimsave(gif_filename, images, duration=1.5,loop=0)
             
 def plot_lineplot(input_list,path):
     

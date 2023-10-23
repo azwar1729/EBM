@@ -3,7 +3,7 @@ import subprocess
 
 
 config = utils.read_json('config.json')
-params_list = ['T',"eps","MH"]
+params_list = ["combined_loss_lambda",'T',"eps","MH"]
 root_path = config["root_path"]
 
 for param in params_list:
