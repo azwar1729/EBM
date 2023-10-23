@@ -12,4 +12,5 @@ Please adjust the hyperparameters in the `config.json` file as per your requirem
   ```bash
   python main.py
 - **On Other Systems**: If you're not operating within the Gilbreth Cluster, run:
+```bash
 - python train.py
