@@ -86,7 +86,7 @@ def plot_transition_images(image_list,path):
 
 def tensor_to_image(tensor, n):
     # Convert tensor to a grid of images
-    grid = vutils.make_grid(torch.clamp(tensor, 0, 1.), normalize=True, nrow=int(n))
+    grid = vutils.make_grid(torch.clamp(tensor, -1, 1.), normalize=True, nrow=int(n))
     # Convert grid to numpy array
     grid_np = grid.mul(255).clamp(0, 255).byte().permute(1, 2, 0).cpu().numpy()
     return grid_np
