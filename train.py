@@ -21,8 +21,6 @@ from tqdm import tqdm
 import torch as t
 import shutil
 import os
-import argparse
-import sys
 import json
 from model.sampler import sample_HMC, sample_Langevin
 from model import models
@@ -33,7 +31,7 @@ from collections import OrderedDict
 from utils_jgm.tikz_pgf_helpers import tpl_save
 import utils
 from tqdm import tqdm
-
+import random
 def train(root_path,resume_checkpoint=False):
     
     logger = utils.set_logger(root_path+"logging.log")
@@ -47,18 +45,18 @@ def train(root_path,resume_checkpoint=False):
 
     transform = tr.Compose([tr.Resize(config['im_sz']),
                             tr.ToTensor(),
-                             tr.Normalize(tuple(0.5*t.ones(config['im_ch'])), tuple(0.5*t.ones(config['im_ch'])))])
+                            tr.Normalize(tuple(0.5*t.ones(config['im_ch'])), 
+                                         tuple(0.5*t.ones(config['im_ch'])))])
     q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
-    print(q.min(),q.max(),q.shape)
-        
+
     #################### Intialize model/Optimizer #######################
     
-    model = getattr(models,config['model'])(n_c=config['im_ch'])
+    model = getattr(models, config['model'])(n_c=config['im_ch'])
     model = model.cuda()
     optimizer= optim.Adam(model.parameters(),lr=1e-4)
     train_iter = 0
-   
-    if resume_checkpoint==True:
+
+    if resume_checkpoint is True:
         checkpoint = torch.load(root_path + f'/state.pth')
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -67,12 +65,12 @@ def train(root_path,resume_checkpoint=False):
     ############################ Training #################################
     
     logger.info("Training Started ...")
-    for ii in range(train_iter,config['num_train_iters']):
+    for ii in range(train_iter, config['num_train_iters']):
     #for ii,data in enumerate(tqdm(train_loader)):
         # Get training data, reshape and add noise
-        logger.info(ii)
+        #logger.info("HERE",ii)
         x_data  = q[ torch.randperm(q.shape[0])[0:config['batch_size']] ] 
-        x_data = x_data.reshape(x_data.shape[0],-1)
+        x_data = x_data.reshape(x_data.shape[0], -1)
         x_data = x_data + config['data_noise'] * torch.randn_like(x_data)
         
         # Intialize starting point of the Langevin chain
@@ -88,26 +86,53 @@ def train(root_path,resume_checkpoint=False):
             T = model.T
         elif config["T"] == "learnable_log_T":
             T = torch.exp(model.log_T)
-        elif not isinstance(config["T"],torch.Tensor):   # If Temperature is not tensor then convert to tensor
+        elif not isinstance(config["T"], torch.Tensor):   # If Temperature is not tensor then convert to tensor
             T = t.tensor(config["T"])
-            
+
         # Run Langevin Dynamics
         if config['combined_loss'] == "True":
-            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(torch.randn_like(x_data), model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
-            x_sample_data_init,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            x_sample, acceptance_ratio, energy, score, acceptance_components, \
+             transition = sample_Langevin(torch.randn_like(x_data),
+                                          model, L=config['L'],
+                                          eps=config['eps'],
+                                          T=T, MH=config["MH"],
+                                          transition_steps=config['transition_steps'])
+            x_sample_data_init,acceptance_ratio, energy, score, acceptance_components, transition = sample_Langevin(x_data, model, L=config['L'], eps=config['eps'],T=T, MH=config["MH"], transition_steps=config['transition_steps'])
             loss = (model(x_data).mean() - model(x_sample).mean()) + config['combined_loss_lambda']*(model(x_data).mean() - model(x_sample_data_init).mean())
-            print("HERE")
-        
         else:
-            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_init, model,L=config['L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'])
+            if config['sampler'] == "Langevin":
+                x_sample, acceptance_ratio, energy, \
+                 score, acceptance_components, \
+                 transition = sample_Langevin(x_init,
+                                              model,
+                                              L=config['L'],
+                                              eps=config['eps'],
+                                              T=T,
+                                              MH=config["MH"],
+                                              transition_steps=config['transition_steps'])
+            elif config['sampler'] == "HMC":
+                x_sample, acceptance_ratio, energy, \
+                 score, transition = sample_HMC(x_init,
+                                                model, 
+                                                Leapfrog_steps=config['LP_steps'],
+                                                HMC_steps=random.randint(50, 500),
+                                                eps=config['eps'],
+                                                gamma=config['gamma'],
+                                                mass=config['mass'],
+                                                metropolis=config['MH'],
+                                                transition_steps=config['transition_steps'],
+                                                ch=1)
             loss = model(x_data).mean() - model(x_sample).mean()
         if config['scale_loss'] == "True" or isinstance(config["T"],str) == True:
             loss = loss / T
         
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         optimizer.step()
-        print(ii,loss.item())
+        logger.info(f"{ii},loss = {loss.sum().item()},Temperature = {T.item()}")
+        logger.info(f"shortRun chain ---> maxVal={x_sample.max().item()}, minVal = {x_sample.min().item()}")
+        #print(ii,loss.item(),T.item())
         #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         
         if ii%config["logging_freq"] == 0:
@@ -131,15 +156,42 @@ def train(root_path,resume_checkpoint=False):
               }, root_path + f'/state.pth')
         
         if ii%config["long_run_freq"]==0:
-            x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(x_data, model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
-        
-            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_DataInit_{ii}.png")
+            
+            if config['sampler'] == "Langevin":
+                x_sample, acceptance_ratio, energy, \
+                 score, acceptance_components, \
+                 transition = sample_Langevin(x_init,
+                                              model,
+                                              L=config['Long_L'],
+                                              eps=config['eps'],
+                                              T=T,
+                                              MH=config["MH"],
+                                              transition_steps=config['transition_steps'],
+                                              ch=config['im_ch'])
+            elif config['sampler'] == "HMC":
+                x_sample, acceptance_ratio, energy, \
+                 score, transition = sample_HMC(x_init,
+                                                model,
+                                                Leapfrog_steps=1,
+                                                HMC_steps=config['HMC_steps_Long'],
+                                                eps=config['eps'],
+                                                gamma=config['gamma'],
+                                                mass=config['mass'],
+                                                metropolis=config['MH'],
+                                                transition_steps=config['transition_steps'],
+                                                ch=config['im_ch'])
+            
+            logger.info(f"longRun chain ---> maxVal={x_sample.max().item()}, \
+                           minVal = {x_sample.min().item()}")
+            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],
+                                       config['im_sz'],config['im_sz']),
+                                       root_path + f"sample_long_DataInit_{ii}.png")
             #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
             utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
             utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_DataInit_{ii}.png")
             utils.plot_lineplot(energy,root_path + f"energy_long_DataInit_{ii}.png")
             utils.plot_lineplot(score,root_path + f"score_long_DataInit_{ii}.png")
-            
+            """
             x_sample,acceptance_ratio, energy, score, acceptance_components,transition = sample_Langevin(torch.randn_like(x_data), model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
         
             utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_NoiseInit_{ii}.png")
@@ -148,7 +200,7 @@ def train(root_path,resume_checkpoint=False):
             utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_NoiseInit_{ii}.png")
             utils.plot_lineplot(energy,root_path + f"energy_long_NoiseInit_{ii}.png")
             utils.plot_lineplot(score,root_path + f"score_long_NoiseInit_{ii}.png")
-            
+            """
             
             
             
@@ -156,7 +208,7 @@ def train(root_path,resume_checkpoint=False):
 if __name__ == "__main__":
 
     config = utils.read_json('config.json')
-    params_list = ['T',"eps","MH"]
+    params_list = ['T',"eps","L","MH"]
     root_path = config["root_path"]
     for param in params_list:
         root_path = root_path + param + "=" + str(config[param]) + "||"

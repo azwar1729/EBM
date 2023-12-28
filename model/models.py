@@ -105,6 +105,8 @@ class Temperature(nn.Module):
         y = self.theta(y)
         return y
         """
+        
+    
 class VanillaNet_2(nn.Module):
     def __init__(self, n_c=1, n_f=32, leak=0.2, p =0):
         super(VanillaNet_2, self).__init__()
@@ -130,12 +132,10 @@ class VanillaNet_2(nn.Module):
         self.conv3 = nn.Conv2d(n_f*2, n_f*4, 4, 2, 1)
         self.conv4 = nn.Conv2d(n_f*4, n_f*8, 4, 2, 1)
         self.conv5 = nn.Conv2d(n_f*8, 1, 4, 1, 0)
-
-    
-    def forward(self, x):
         
-      x = x.view(-1,self.n_c,32,32)
-
+    def forward(self, x):       
+      x = x.view(-1, self.n_c, 32, 32)
+      
       return self.f(x).squeeze()
 
 
