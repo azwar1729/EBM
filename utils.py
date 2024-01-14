@@ -73,6 +73,7 @@ def plot_single_images(image,path):
 
 def plot_multiple_images(image_tensor, path): tv.utils.save_image(torch.clamp(image_tensor, -1., 1.), path, normalize=True, nrow=int(image_tensor.shape[0] ** 0.5))
 
+
 def plot_transition_images(image_list,path):
     
     tensor_images = torch.stack(image_list)
@@ -83,6 +84,7 @@ def plot_transition_images(image_list,path):
     plt.savefig(path)
     plt.close()
 
+
 def tensor_to_image(tensor, n):
     # Convert tensor to a grid of images
     grid = vutils.make_grid(torch.clamp(tensor, -1, 1.), normalize=True, nrow=int(n))
@@ -90,17 +92,51 @@ def tensor_to_image(tensor, n):
     grid_np = grid.mul(255).clamp(0, 255).byte().permute(1, 2, 0).cpu().numpy()
     return grid_np
 
+
 def tensors_to_gif(tensor_list, n, gif_filename="transition.gif"):
     images = []
     for tensor in tensor_list:
         img_np = tensor_to_image(tensor, n)
         images.append(img_np)
 
-    imageio.mimsave(gif_filename, images, duration=1.5,loop=0)
-            
+    imageio.mimsave(gif_filename, images, duration=1.5,loop=0)         
+
+
 def plot_lineplot(input_list,path):
     
     plt.figure()
     plt.plot(input_list)
     plt.savefig(path)
     plt.close()
+
+
+def sample_persistent(state_set, batch_size=64):
+    rand_inds = torch.randperm(state_set.shape[0])[0:batch_size]
+    return state_set[rand_inds], rand_inds
+
+
+def download_flowers_data():
+    import tarfile
+    try:
+        from urllib.request import urlretrieve
+    except ImportError:
+        from urllib import urlretrieve
+
+    dataset_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data/flowers/')
+    if not os.path.exists(os.path.join(dataset_folder, "jpg")):
+        if not os.path.exists(dataset_folder):
+            os.makedirs(dataset_folder)
+        print('Downloading data from http://www.robots.ox.ac.uk/~vgg/data/flowers/102/ ...')
+        tar_filename = os.path.join(dataset_folder, "102flowers.tgz")
+        if not os.path.exists(tar_filename):
+            urlretrieve("http://www.robots.ox.ac.uk/~vgg/data/flowers/102/102flowers.tgz", tar_filename)
+
+        # extract flower images from tar file
+        print('Extracting ' + tar_filename + '...')
+        tarfile.open(tar_filename).extractall(path=dataset_folder)
+
+        # clean up
+        os.remove(tar_filename)
+        print('Done.')
+    else:
+        print('Data available at ' + dataset_folder)

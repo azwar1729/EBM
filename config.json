@@ -1,31 +1,49 @@
+
+
 {
-    "root_path":"/scratch/gilbreth/abdulsal/EBM-Analysis/",  
-    "num_train_iters":10000,
+    "root_path":"/home/azwar/EBM-Analysis/Combined/Flower/",  
+    "num_train_iters":1000000,
     "logging_freq": 100,
     "long_run_freq":1000,
     "reset":"True",
+    "long_job":"True",
 
     "comment": "Data Configuration",
-    "data":"mnist",
+    "data":"flowers",
     "im_sz": 32,
-    "im_ch": 1,
+    "im_ch": 3,
     "batch_size":64,
     "data_noise":3e-2,
 
     "comment": "Model Name",
     "model":"VanillaNet_2",
+    
+    "comment": "Sampler type",
+    "sampler": "Langevin",
+    "eps":1,
+    "MH":"False",
+    "adaptive":"False",
+    "adaptive_threshold":0.65,
+    "transition_steps":100,
 
     "comment": "Langevin Dynamics Parameters",
-    "init":"noise",
+    "init":"persistent",
     "L":100,
     "T":5e-5,
-    "eps":1,
-    "MH":"True",
-    "transition_steps":200,
     "Long_L":10000,
 
+    "comment": "HMC",
+    "LP_steps":1,
+    "HMC_steps":150,
+    "gamma":0.9,
+    "mass":1,
+    "HMC_steps_Long":10000,
+
     "comment": "loss function",
-    "scale_loss":"False"
+    "scale_loss":"False",
+    "combined_loss":"True",
+    "combined_loss_lambda":0.1
+    
 
     
 }

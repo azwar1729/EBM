@@ -34,6 +34,13 @@ def HMC_acceptance(model, curr_q, curr_p, proposed_q, proposed_p, mass=1):
 
     return ratio
 
+def adapt(curr_ratio, threshold, eps):
+
+    diff = (curr_ratio - threshold)
+    diff = diff/10
+    eps = eps * (1 + diff)
+    return eps
+
 
 def sample_HMC(q,
                model, Leapfrog_steps=3,
@@ -42,6 +49,8 @@ def sample_HMC(q,
                gamma=0.9,
                mass=1e-2,
                metropolis=True,
+               adaptive=False,
+               adaptive_threshold = 0.65,
                transition_steps=100,
                ch=1):
 
@@ -68,6 +77,12 @@ def sample_HMC(q,
             acceptance_ratio.append(ratio)         
             # pick binomial R.V based on acceptance ratio  
             accept = np.random.binomial(n=1, p=ratio)
+            # If adaptive adjustment for eps set to True
+            if adaptive == "True":
+                eps = adapt(curr_ratio=accept,
+                            threshold=adaptive_threshold,
+                            eps=eps)
+               
             # if metroplis is "False" run unadjusted HMC
             if metropolis == "False":
                 accept = 1
@@ -82,10 +97,34 @@ def sample_HMC(q,
                     transition.append(curr_q.view(-1, ch, 32, 32))
                 
     #return curr_q.detach(), score, acceptance_ratio, energy
-    return curr_q.detach(),acceptance_ratio, energy, score, transition
+    print(eps)
+    return curr_q.detach(),acceptance_ratio, energy, score, transition,eps
+
+   
+def langevin_acceptance(x, x_star, grad, grad_star, model, eps, T):
+    
+    term1 = t.norm(x_star - x + eps * grad, dim=1) ** 2   
+    term2 = t.norm(x - x_star + eps * grad_star, dim=1) ** 2
+    
+    energy_diff = model(x)/T - model(x_star)/T
+
+    ratio = (1 / (4 * eps * T)) * (term1 - term2) + energy_diff
+    ratio = ratio.clamp(-1e2, 1e2)
+    ratio = t.exp(ratio).clamp(0, 1).mean().item()
+    
+    return ratio 
     
 
-def sample_Langevin(x, model,L=150,eps=1,T=5e-5,MH=False,transition_steps=100,ch=1):
+def sample_Langevin(x,
+                    model,
+                    L=150,
+                    eps=1,
+                    T=5e-5,
+                    MH=False,
+                    transition_steps=100,
+                    adaptive=False,
+                    adaptive_threshold=0.5,
+                    ch=1):
     """
     L --> Total number of Langevin Iterations
     eps --> step size
@@ -97,47 +136,43 @@ def sample_Langevin(x, model,L=150,eps=1,T=5e-5,MH=False,transition_steps=100,ch
     energy = []  # List to keep track of energy across langevin iterations
     score = [] # List to keep track of score magnitude across langevin iterations
     transition = [] # List to keep of image transitions
-    
-    acceptance_energy_term = []  # Diff of Energy in acceptance term
-    acceptance_score_term = []   # Diff in L2 terms
-    
-    x.requires_grad = True  # set gradient flag of x is true for Langevin 
-    
+    loss = t.tensor(0)
     for i in range(L):
 
+        x.requires_grad = True  # set gradient flag of x is true for Langevin 
         grad = torch.autograd.grad(model(x).sum(), [x])[0]
         accept = 0
+
         while accept == 0:
             
             x_star = x - eps*grad + t.sqrt(2 * eps * T)*t.randn_like(x)
             grad_star = torch.autograd.grad(model(x_star).sum(), [x_star])[0]
 
-            term1 = t.norm(x_star - x + eps * grad, dim=1) ** 2    
-            term2 = t.norm(x - x_star + eps * grad_star, dim=1) ** 2
-            
-            energy_diff = model(x)/T - model(x_star)/T
-
-            ratio =  (1 / (4 * eps * T)) * (term1 - term2) + energy_diff
-            ratio = ratio.clamp(-1e2,1e2)
-            ratio = t.exp(ratio).clamp(0,1).mean().item()
+            ratio = langevin_acceptance(x, x_star, grad, grad_star, model, eps, T)
             accept = np.random.binomial(n=1,p=ratio)
             
-            if MH=="False":
+            if adaptive == "True":
+                eps = adapt(curr_ratio=accept,
+                            threshold=adaptive_threshold,
+                            eps=eps)
+                
+            if MH == "False":
                 accept = 1
             
-            acceptance_energy_term.append(energy_diff.mean().item())
-            acceptance_score_term.append( ((1 / (4 * eps * T)) * (term1 - term2)).mean().item() )
             acceptance_ratio.append(ratio)
-            energy.append(model(x).mean().item())
-            score.append((grad**2).sum(axis=1).mean().item())
-     
-            
-        x = x_star 
-        if i%transition_steps==0:
-            transition.append(x.view(-1,ch,32,32))
+
+        #loss = loss + ratio * ((x_star - x) ** 2).sum()
+        x = x_star.detach().clone()
+        #x = x.detach()
     
-    acceptance_components = np.array([acceptance_energy_term, acceptance_score_term])
-    return x.detach(),acceptance_ratio, energy, score, acceptance_components,transition
+        energy.append(model(x).mean().item())
+        score.append((grad**2).sum(axis=1).mean().item())  
+
+        if i%transition_steps == 0:
+            
+            transition.append(x.view(-1,ch,32,32))
+    print(eps,loss,loss.requires_grad)
+    return x.detach(), acceptance_ratio, energy, score, transition, loss
     
 
 
