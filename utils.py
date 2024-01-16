@@ -103,7 +103,6 @@ def tensors_to_gif(tensor_list, n, gif_filename="transition.gif"):
 
 
 def plot_lineplot(input_list,path):
-    
     plt.figure()
     plt.plot(input_list)
     plt.savefig(path)
@@ -113,7 +112,6 @@ def plot_lineplot(input_list,path):
 def sample_persistent(state_set, batch_size=64):
     rand_inds = torch.randperm(state_set.shape[0])[0:batch_size]
     return state_set[rand_inds], rand_inds
-
 
 def download_flowers_data():
     import tarfile

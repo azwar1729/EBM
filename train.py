@@ -33,7 +33,24 @@ import utils
 from tqdm import tqdm
 import random
 
-def train(root_path,resume_checkpoint=False):
+
+def save_results(x_sample, intermediate_results, ii, text=""):
+
+    global config
+    global root_path
+
+    acceptance_ratio = intermediate_results['acceptance_ratio']
+    energy = intermediate_results['energy']
+    score = intermediate_results['score']
+    utils.plot_multiple_images(x_sample.view(-1, config['im_ch'], config['im_sz'],
+                                             config['im_sz']), root_path + f"sample_{text}{ii}.png")
+    utils.plot_lineplot(acceptance_ratio, root_path + f"acceptance_ratio_{text}{ii}.png")
+    utils.plot_lineplot(energy, root_path + f"energy_{text}{ii}.png")
+    utils.plot_lineplot(score, root_path + f"score_{text}{ii}.png")
+    return
+
+
+def train(root_path, resume_checkpoint=False):
     
     logger = utils.set_logger(root_path+"logging.log")
     config = utils.read_json(root_path+"config.json")
@@ -50,15 +67,21 @@ def train(root_path,resume_checkpoint=False):
                             tr.ToTensor(),
                             tr.Normalize(tuple(0.5*t.ones(config['im_ch'])), 
                                          tuple(0.5*t.ones(config['im_ch'])))])
+    # Collect all data and store in q variable
     q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
+    # Create bank for persistent chain 
     x_bank = t.randn_like(q)
     x_bank = x_bank.view(-1, config['im_ch']*config['im_sz']*config['im_sz'])
 
     #################### Intialize model/Optimizer #######################
     
-    model = getattr(models, config['model'])(n_c=config['im_ch'])
+    model = getattr(models, config['model'])(n_c=config['im_ch'],
+                                             scaling=config['scaling'])
     model = model.cuda()
-    optimizer= optim.Adam(model.parameters(), lr=1e-4)
+    if config['optimizer'] == "adam":
+        optimizer = optim.Adam(model.parameters(), lr=config['lr_init'])
+    elif config['optimizer'] == "sgd":
+        optimizer = optim.SGD(model.parameters(), lr=config['lr_init'])
     eps = config['eps']
     train_iter = 0
 
@@ -96,60 +119,38 @@ def train(root_path,resume_checkpoint=False):
             T = t.tensor(config["T"])
             
 
-        # Run Langevin Dynamics
+        # If combined loss run 2 MCMC chains
         if config['combined_loss'] == "True":
+            # Get samples init from data or persistent chain 
+            if config['sampler'] == "Langevin": 
 
-            x_sample, acceptance_ratio, energy, score, \
-             transition, _ = sample_Langevin(x_init,
-                                          model, L=config['L'],
-                                          eps=config['eps'],
-                                          T=T, MH=config["MH"],
-                                          adaptive=config['adaptive'],
-                                          adaptive_threshold=config['adaptive_threshold'],
-                                          transition_steps=config['transition_steps'])
-            
-            x_sample_noise_init, acceptance_ratio, energy, score, \
-             transition, _ = sample_Langevin(torch.randn_like(x_data), model,
-                                          L=config['L'], eps=config['eps'],
-                                          T=T, MH=config["MH"], 
-                                          adaptive=config['adaptive'],
-                                          adaptive_threshold=config['adaptive_threshold'],
-                                          transition_steps=config['transition_steps'])
-            
-            loss = config['combined_loss_lambda']*(model(x_data).mean() - model(x_sample_noise_init).mean()) + \
-            (model(x_data).mean() - model(x_sample).mean())
-                                                    
+                combined_x = torch.cat((x_init, torch.randn_like(x_init)), 0)
+                x_sample_combined, intermediate_results = sample_Langevin(combined_x, model, dict(config,T=T))
+                x_sample = x_sample_combined[:config['batch_size']]
+                x_sample_noise_init = x_sample_combined[config['batch_size']:]
+                                           
+            elif config['sampler'] == "HMC":
+               
+                combined_x = torch.cat((x_init, torch.randn_like(x_init)), 0)
+                x_sample_combined, intermediate_results = sample_HMC(combined_x, model, config)
+                x_sample = x_sample_combined[:config['batch_size']]
+                x_sample_noise_init = x_sample_combined[config['batch_size']:]
+                                                                                                                    
+            loss = config['combined_loss_lambda']*(model(x_data).mean() - model(x_sample).mean()) + \
+             (model(x_data).mean() - model(x_sample_noise_init).mean()) 
+                                                               
         else:
             if config['sampler'] == "Langevin":
-                x_sample, acceptance_ratio, energy, \
-                 score, transition, LD_loss = sample_Langevin(x_init,
-                                              model,
-                                              L=config['L'],
-                                              eps=config['eps'],
-                                              T=T,
-                                              MH=config["MH"],
-                                              adaptive=config['adaptive'],
-                                              adaptive_threshold=config['adaptive_threshold'],
-                                              transition_steps=config['transition_steps'])
+                x_sample, intermediate_results = sample_Langevin(x_init, model, dict(config, T=T))
+
             elif config['sampler'] == "HMC":
-                x_sample, acceptance_ratio, energy, \
-                 score, transition, _ = sample_HMC(x_init,
-                                                model,
-                                                Leapfrog_steps=config['LP_steps'],
-                                                HMC_steps=config['HMC_steps'],
-                                                eps=config['eps'],
-                                                gamma=config['gamma'],
-                                                mass=config['mass'],
-                                                metropolis=config['MH'],
-                                                transition_steps=config['transition_steps'],
-                                                ch=1,
-                                                adaptive=config['adaptive'],
-                                                adaptive_threshold=config['adaptive_threshold'])
-            
-            loss = model(x_data).mean() - model(x_sample).mean() 
+                x_sample, intermediate_results = sample_HMC(x_init, model, config)
+                                                
+            loss = model(x_data).mean() - model(x_sample).mean()
+            if config['learnable_sampler'] == "True":
+                loss = loss + 1e-1 * intermediate_results["loss"]
              
-       
-        if config['scale_loss'] == "True" or isinstance(config["T"],str) == True:
+        if config['scale_loss'] == "True" or isinstance(config["T"],str) is True:
             loss = loss / T
         # If persistent then update the x_bank sample
         if config['init'] == "persistent":
@@ -157,22 +158,21 @@ def train(root_path,resume_checkpoint=False):
 
         optimizer.zero_grad()
         loss.backward()
-
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         optimizer.step()
+
+        for lr_gp in optimizer.param_groups:
+            lr_gp['lr'] = max(config['lr_min'], lr_gp['lr'] * config['lr_decay'])
+
         logger.info(f"{ii},loss = {loss.sum().item()},Temperature = {T.item()}")
         logger.info(f"shortRun chain ---> maxVal={x_sample.max().item()}, minVal = {x_sample.min().item()}")
         logger.info(f"eps = {eps}")
         #print(ii,loss.item(),T.item())
         #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         
-        if ii%config["logging_freq"] == 0:
-             
-            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_{ii}.png")
-            #utils.plot_transition_images(transition,root_path + f"transition_{ii}.png")
-            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_{ii}.png")
-            utils.plot_lineplot(energy,root_path + f"energy_{ii}.png")
-            utils.plot_lineplot(score,root_path + f"score_{ii}.png")
+        if ii % config["logging_freq"] == 0:
+            
+            save_results(x_sample, intermediate_results, ii)
             """
             torch.save({
               'iteration': ii,
@@ -189,54 +189,28 @@ def train(root_path,resume_checkpoint=False):
         if ii%config["long_run_freq"]==0:
             
             if config['sampler'] == "Langevin":
-                x_sample, acceptance_ratio, energy, \
-                 score, transition, _ = sample_Langevin(x_init,
-                                                     model,
-                                                     L=config['Long_L'],
-                                                     eps=config['eps'],
-                                                     T=T,
-                                                     MH=config["MH"],
-                                                     transition_steps=config['transition_steps'],
-                                                     adaptive=config['adaptive'],
-                                                     adaptive_threshold=config['adaptive_threshold'],
-                                                     ch=config['im_ch'])
+                x_sample_data_init, intermediate_results_data = sample_Langevin(x_data, model,
+                                                                                dict(config, L=config['Long_L'],T=T))            
+                x_sample_noise_init, intermediate_results_noise = sample_Langevin(torch.randn_like(x_data), 
+                                                                                  model, dict(config, L=config["Long_L"],T=T))                                      
             elif config['sampler'] == "HMC":
-                x_sample, acceptance_ratio, energy, \
-                 score, transition, _ = sample_HMC(x_data,
-                                                  model,
-                                                  Leapfrog_steps=1,
-                                                  HMC_steps=config['HMC_steps_Long'],
-                                                  eps=config['eps'],
-                                                  gamma=config['gamma'],
-                                                  mass=config['mass'],
-                                                  metropolis=config['MH'],
-                                                  transition_steps=config['transition_steps'],
-                                                  ch=config['im_ch'],
-                                                  adaptive=config['adaptive'],
-                                                  adaptive_threshold=config['adaptive_threshold'])
+                x_sample_data_init, intermediate_results_data = sample_HMC(x_data, model,
+                                                                            dict(config, HMC_steps=config['HMC_steps_Long']))
+                x_sample_noise_init, intermediate_results_noise = sample_HMC(torch.randn_like(x_data), model,
+                                                                              dict(config, HMC_steps=config['HMC_steps_Long']))
             
             logger.info(f"longRun chain ---> maxVal={x_sample.max().item()}, \
                            minVal = {x_sample.min().item()}")
-            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],
-                                       config['im_sz'],config['im_sz']),
-                                       root_path + f"sample_long_DataInit_{ii}.png")
-            #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
-            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
-            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_DataInit_{ii}.png")
-            utils.plot_lineplot(energy,root_path + f"energy_long_DataInit_{ii}.png")
-            utils.plot_lineplot(score,root_path + f"score_long_DataInit_{ii}.png")
-      
-            x_sample, acceptance_ratio, energy, \
-                 score, transition, _ = sample_Langevin(torch.randn_like(x_data), model,L=config['Long_L'],eps=config['eps'],T=T,MH=config["MH"],transition_steps=config['transition_steps'],ch=config['im_ch'])
-        
-            utils.plot_multiple_images(x_sample.view(-1,config['im_ch'],config['im_sz'],config['im_sz']),root_path + f"sample_long_NoiseInit_{ii}.png")
-            #utils.plot_transition_images(transition,root_path + f"transition_long_{ii}.png")
-            utils.tensors_to_gif(transition, int(config['batch_size']**0.5), gif_filename=root_path + f"transition_long_NoiseInit_{ii}.gif")
-            utils.plot_lineplot(acceptance_ratio,root_path + f"acceptance_ratio_long_NoiseInit_{ii}.png")
-            utils.plot_lineplot(energy,root_path + f"energy_long_NoiseInit_{ii}.png")
-            utils.plot_lineplot(score,root_path + f"score_long_NoiseInit_{ii}.png")
-          
             
+            save_results(x_sample_data_init, intermediate_results_data, ii, text="long_DataInit_")
+            save_results(x_sample_noise_init, intermediate_results_noise, ii, text="long_NoiseInit_")
+
+            utils.tensors_to_gif(intermediate_results_data['transition'], int(config['batch_size']**0.5),
+                                 gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
+            utils.tensors_to_gif(intermediate_results_noise['transition'], int(config['batch_size']**0.5),
+                                 gif_filename=root_path + f"transition_long_NoiseInit_{ii}.gif")
+           
+           
 if __name__ == "__main__":
 
     config = utils.read_json('config.json')
@@ -256,14 +230,3 @@ if __name__ == "__main__":
     utils.copy_folders(['train.py','utils.py','config.json'],root_path)
     
     train(root_path,False)
-    
-    
-    
-    
-    
-
-
-    
-
-
-
