@@ -2,9 +2,9 @@
 
 {
     "root_path":"/home/azwar/EBM-Analysis/Combined/Flower/",  
-    "num_train_iters":1000000,
+    "num_train_iters":200000,
     "logging_freq": 100,
-    "long_run_freq":1000,
+    "long_run_freq":10000,
     "reset":"True",
     "long_job":"True",
 
@@ -16,10 +16,18 @@
     "data_noise":3e-2,
 
     "comment": "Model Name",
-    "model":"VanillaNet_2",
+    "model":"NonlocalNet",
+    "scaling":1,
+
+    "comment": "optimizer",
+    "optimizer":"adam",
+    "lr_init": 1e-4,
+    "lr_min": 1e-4,
+    "lr_decay": 1,
     
     "comment": "Sampler type",
     "sampler": "Langevin",
+    "learnable_sampler":"False",
     "eps":1,
     "MH":"False",
     "adaptive":"False",
@@ -28,13 +36,13 @@
 
     "comment": "Langevin Dynamics Parameters",
     "init":"persistent",
-    "L":100,
-    "T":5e-5,
-    "Long_L":10000,
+    "L":250,
+    "T":1.25e-5,
+    "Long_L":100,
 
     "comment": "HMC",
-    "LP_steps":1,
-    "HMC_steps":150,
+    "Leapfrog_steps":1,
+    "HMC_steps":100,
     "gamma":0.9,
     "mass":1,
     "HMC_steps_Long":10000,
@@ -42,7 +50,7 @@
     "comment": "loss function",
     "scale_loss":"False",
     "combined_loss":"True",
-    "combined_loss_lambda":0.1
+    "combined_loss_lambda": 1
     
 
     

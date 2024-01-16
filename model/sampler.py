@@ -165,9 +165,9 @@ def sample_Langevin(x, model, config):
                                 eps=eps)
             
             acceptance_ratio.append(ratio)
-        print(ratio)
-        lambd = 5
-        loss = loss +  lambd**2/(ratio * ((x_star - x) ** 2).sum()) - ratio/lambd**2 * ((x_star - x) ** 2).sum()
+            
+        #lambd = 5
+        #loss = loss +  lambd**2/(ratio * ((x_star - x) ** 2).sum()) - ratio/lambd**2 * ((x_star - x) ** 2).sum()
         #print(loss)
         x = x_star.detach().clone()
         x = x.detach().clone()

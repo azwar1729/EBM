@@ -179,13 +179,13 @@ def train(root_path, resume_checkpoint=False):
               'model_state_dict': model.state_dict(),
               'optimizer_state_dict': optimizer.state_dict(),
               }, root_path + f'/state-{ii}.pth')
-        
+            """
             torch.save({
               'iteration': ii,
               'model_state_dict': model.state_dict(),
               'optimizer_state_dict': optimizer.state_dict(),
               }, root_path + f'/state.pth')
-            """
+            
         if ii%config["long_run_freq"]==0:
             
             if config['sampler'] == "Langevin":
