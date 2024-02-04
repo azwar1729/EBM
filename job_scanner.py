@@ -9,7 +9,7 @@ import utils
 while True:
     
     time.sleep(5)
-    required_job_dic = utils.read_json('curr_job.json')     ### of the form dic = {123456:'/scratch/gilrbeth/abdulsal/file.py'} 
+    required_job_dic = utils.read_json('curr_job1.json')     ### of the form dic = {123456:'/scratch/gilrbeth/abdulsal/file.py'} 
     output = subprocess.run(['squeue','-u','abdulsal'], stdout=subprocess.PIPE).stdout.decode('utf-8').split()  ## Gives the entire output upon running command squeue -u abdulsal
     current_jobs_list = [value for index, value in enumerate(output) if index % 9 == 0][1:] # Retrieves every 9th element to get only jobid excluding the first one since its not jobid
     
@@ -30,13 +30,13 @@ conda activate refh
 python -c 'from train import train;train("{root_path}",True)'
 
     """     
-            with open("temp_sbatch_script.sbatch", "w") as f:
+            with open(f"{root_path}temp_sbatch_script.sbatch", "w") as f:
                 f.write(sbatch_script)
             
-            output  = subprocess.run(['sbatch','temp_sbatch_script.sbatch'], stdout=subprocess.PIPE).stdout.decode('utf-8').split()
+            output  = subprocess.run(['sbatch',f'{root_path}temp_sbatch_script.sbatch'], stdout=subprocess.PIPE).stdout.decode('utf-8').split()
             required_job_dic[root_path] = output[-1]
     
-    utils.write_json(required_job_dic,'curr_job.json')
+    utils.write_json(required_job_dic,'curr_job1.json')
             
         
     

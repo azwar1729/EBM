@@ -3,7 +3,7 @@ import subprocess
 
 
 config = utils.read_json('config.json')
-params_list = ["combined_loss_lambda",'T',"eps","MH"]
+params_list = ["combined_loss_lambda","eps","MH","L","init"]
 root_path = config["root_path"]
 
 for param in params_list:
@@ -17,7 +17,7 @@ else:
     if config['reset'] == "True":
         utils.delete_contents(root_path)
 
-utils.copy_folders(['train.py','utils.py','config.json'],root_path)
+utils.copy_folders(['train.py','utils.py','config.json',"model"],root_path)
 
 
     
@@ -35,12 +35,12 @@ conda activate refh
 python -c 'from train import train;train("{root_path}",False)'
 
     """
-with open("temp_sbatch_script.sbatch", "w") as f:
+with open(f"{root_path}temp_sbatch_script.sbatch", "w") as f:
     f.write(sbatch_script)
 
 
-output  = subprocess.run(['sbatch','temp_sbatch_script.sbatch'], stdout=subprocess.PIPE).stdout.decode('utf-8').split()
+output  = subprocess.run(['sbatch',f'{root_path}temp_sbatch_script.sbatch'], stdout=subprocess.PIPE).stdout.decode('utf-8').split()
 
-curr_job = utils.read_json('curr_job.json')
+curr_job = utils.read_json('curr_job1.json')
 curr_job[root_path] = output[-1]
-utils.write_json(curr_job,'curr_job.json')
+utils.write_json(curr_job,'curr_job1.json')

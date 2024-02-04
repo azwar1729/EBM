@@ -14,6 +14,9 @@ import os
 import torchvision.utils as vutils
 import torchvision as tv
 import imageio
+import os 
+import glob
+
 def set_logger(filename):
     
     logging.basicConfig(filename=filename,
@@ -138,3 +141,13 @@ def download_flowers_data():
         print('Done.')
     else:
         print('Data available at ' + dataset_folder)
+
+
+
+def find_latest_checkpoint(root_path):
+    # List all .pth files and sort them
+    files = glob.glob(os.path.join(root_path, 'state-*.pth'))
+    if not files:
+        return None
+    latest_checkpoint = max(files, key=os.path.getctime)
+    return latest_checkpoint

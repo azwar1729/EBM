@@ -249,3 +249,69 @@ class NonLocalBlock(nn.Module):
         z = w_y + x
 
         return z
+    
+    
+
+
+# Define Swish activation function
+class Swish(nn.Module):
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+
+# Define Conv2D layer with Swish activation
+class Conv2dSwish(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+        super(Conv2dSwish, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.swish = Swish()
+
+    def forward(self, x):
+        return self.swish(self.conv(x))
+
+# Define Residual Block
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = Conv2dSwish(channels, channels, 3, 1, 1)
+        self.conv2 = Conv2dSwish(channels, channels, 3, 1, 1)
+
+    def forward(self, x):
+        return x + self.conv2(self.conv1(x))
+
+# EBM Architecture
+class EBM_Big(nn.Module):
+    def __init__(self, n_f=64, n_c=3, scaling=1):
+        super(EBM_Big, self).__init__()
+        self.n_c =n_c
+        self.n_f = n_f
+        self.conv1 = Conv2dSwish(self.n_c, self.n_f, 3, 1, 1)
+        self.res1 = ResidualBlockArchitecture(self.n_f, self.n_f * 2)
+        self.res2 = ResidualBlockArchitecture(self.n_f*2, self.n_f * 4)
+        self.res3 = ResidualBlockArchitecture(self.n_f*4, self.n_f * 8)
+        self.conv2 = Conv2dSwish(self.n_f * 8, 100, 3, 4, 0)
+
+    def forward(self, x):
+        x = x.view(-1,self.n_c,32,32)
+        x = self.conv1(x)
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+        x = self.conv2(x)
+        x = x.view(x.shape[0],-1)
+        return x.sum(axis=1)
+        #return x.sum(dim=1)  # Sum over channel dimension
+
+# Residual Block Architecture
+class ResidualBlockArchitecture(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ResidualBlockArchitecture, self).__init__()
+        self.conv1 = Conv2dSwish(in_channels, out_channels, 3, 1, 1)
+        self.conv2 = Conv2dSwish(out_channels, out_channels, 3, 1, 1)
+        self.conv3 = Conv2dSwish(out_channels, out_channels, 3, 1, 1)
+        self.avg_pool = nn.AvgPool2d(2, 2)
+
+    def forward(self, x):
+        residual = self.conv1(x)
+        x = self.conv2(residual)
+        x = self.conv3(x) + residual
+        return self.avg_pool(x)

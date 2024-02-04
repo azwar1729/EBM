@@ -14,11 +14,10 @@ from torchvision import datasets, transforms
 from torchvision.utils import make_grid , save_image
 from torch.nn.utils import spectral_norm
 import torchvision.utils as tv_utils
+import torch as t
 from PIL import Image
 from torch.nn import Softplus
-import torch as t
 from tqdm import tqdm
-import torch as t
 import shutil
 import os
 import json
@@ -32,12 +31,11 @@ from utils_jgm.tikz_pgf_helpers import tpl_save
 import utils
 from tqdm import tqdm
 import random
+import datetime
+
+def save_results(x_sample, intermediate_results, ii,config,root_path, text=""):
 
 
-def save_results(x_sample, intermediate_results, ii, text=""):
-
-    global config
-    global root_path
 
     acceptance_ratio = intermediate_results['acceptance_ratio']
     energy = intermediate_results['energy']
@@ -51,6 +49,9 @@ def save_results(x_sample, intermediate_results, ii, text=""):
 
 
 def train(root_path, resume_checkpoint=False):
+    
+    start_time = datetime.datetime.now()
+    time_to_check = datetime.timedelta(hours=3, minutes=50)
     
     logger = utils.set_logger(root_path+"logging.log")
     config = utils.read_json(root_path+"config.json")
@@ -86,7 +87,8 @@ def train(root_path, resume_checkpoint=False):
     train_iter = 0
 
     if resume_checkpoint is True:
-        checkpoint = torch.load(root_path + f'/state.pth')
+        checkpoint = utils.find_latest_checkpoint(root_path) # Get path
+        checkpoint = torch.load(checkpoint) # Load state
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         train_iter = checkpoint['iteration']
@@ -98,6 +100,12 @@ def train(root_path, resume_checkpoint=False):
     #for ii,data in enumerate(tqdm(train_loader)):
         # Get training data, reshape and add noise
         #logger.info("HERE",ii)
+        current_time = datetime.datetime.now()
+        time_difference = current_time - start_time
+        if time_difference >= time_to_check:
+            logger.info("time out")
+            break
+        
         x_data  = q[torch.randperm(q.shape[0])[0:config['batch_size']]]
         x_data = x_data.reshape(x_data.shape[0], -1)
         x_data = x_data + config['data_noise'] * torch.randn_like(x_data)
@@ -123,11 +131,17 @@ def train(root_path, resume_checkpoint=False):
         if config['combined_loss'] == "True":
             # Get samples init from data or persistent chain 
             if config['sampler'] == "Langevin": 
-
-                combined_x = torch.cat((x_init, torch.randn_like(x_init)), 0)
-                x_sample_combined, intermediate_results = sample_Langevin(combined_x, model, dict(config,T=T))
-                x_sample = x_sample_combined[:config['batch_size']]
-                x_sample_noise_init = x_sample_combined[config['batch_size']:]
+                if config["L_data"] == config["L_noise"]:
+                    combined_x = torch.cat((x_init, torch.randn_like(x_init)), 0)
+                    x_sample_combined, intermediate_results = sample_Langevin(combined_x, model, 
+                                                                              dict(config,T=T,L=config['L_data']))
+                    x_sample = x_sample_combined[:config['batch_size']]
+                    x_sample_noise_init = x_sample_combined[config['batch_size']:]
+                else:
+                    x_sample_noise_init, intermediate_results = sample_Langevin(torch.randn_like(x_init), model, 
+                                                                              dict(config,T=T,L=config['L_noise']))
+                    x_sample, intermediate_results = sample_Langevin(x_init, model, 
+                                                                    dict(config,T=T,L=config['L_data']))
                                            
             elif config['sampler'] == "HMC":
                
@@ -172,19 +186,20 @@ def train(root_path, resume_checkpoint=False):
         
         if ii % config["logging_freq"] == 0:
             
-            save_results(x_sample, intermediate_results, ii)
-            """
+            save_results(x_sample, intermediate_results, ii, config, root_path)
+           
             torch.save({
               'iteration': ii,
               'model_state_dict': model.state_dict(),
               'optimizer_state_dict': optimizer.state_dict(),
-              }, root_path + f'/state-{ii}.pth')
+              }, root_path + f'state-{ii}.pth')
             """
             torch.save({
               'iteration': ii,
               'model_state_dict': model.state_dict(),
               'optimizer_state_dict': optimizer.state_dict(),
               }, root_path + f'/state.pth')
+            """
             
         if ii%config["long_run_freq"]==0:
             
@@ -202,14 +217,14 @@ def train(root_path, resume_checkpoint=False):
             logger.info(f"longRun chain ---> maxVal={x_sample.max().item()}, \
                            minVal = {x_sample.min().item()}")
             
-            save_results(x_sample_data_init, intermediate_results_data, ii, text="long_DataInit_")
-            save_results(x_sample_noise_init, intermediate_results_noise, ii, text="long_NoiseInit_")
+            save_results(x_sample_data_init, intermediate_results_data, ii, config,root_path, text="long_DataInit_")
+            save_results(x_sample_noise_init, intermediate_results_noise, ii, config,root_path, text="long_NoiseInit_")
 
             utils.tensors_to_gif(intermediate_results_data['transition'], int(config['batch_size']**0.5),
                                  gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
             utils.tensors_to_gif(intermediate_results_noise['transition'], int(config['batch_size']**0.5),
                                  gif_filename=root_path + f"transition_long_NoiseInit_{ii}.gif")
-           
+            print(len(intermediate_results_data['transition']))
            
 if __name__ == "__main__":
 
