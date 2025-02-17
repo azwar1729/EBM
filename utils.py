@@ -107,6 +107,7 @@ def tensors_to_gif(tensor_list, n, gif_filename="transition.gif"):
 
 def plot_lineplot(input_list,path):
     plt.figure()
+    #print(input_list, len(input_list))
     plt.plot(input_list)
     plt.savefig(path)
     plt.close()
@@ -151,3 +152,16 @@ def find_latest_checkpoint(root_path):
         return None
     latest_checkpoint = max(files, key=os.path.getctime)
     return latest_checkpoint
+
+def cosine_schedule(eta_min=0, eta_max=1, T=10):
+    return [
+        eta_min + (eta_max - eta_min) * (1 + math.cos(tt * math.pi / T)) / 2
+        for tt in range(T)
+    ]
+
+def adapt(curr_ratio, threshold, eps):
+
+    diff = (curr_ratio - threshold)
+    diff = diff/10
+    eps = eps * (1 + diff)
+    return eps

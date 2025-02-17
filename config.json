@@ -1,10 +1,10 @@
 
 
 {
-    "root_path":"/home/azwar/EBM-Analysis/Combined/Flower/",  
-    "num_train_iters":200000,
+    "root_path":"/scratch/gilbreth/abdulsal/EBM-Analysis/CIFAR10/CDLoss/MH_with_adaptive_stepSize/",  
+    "num_train_iters":10000,
     "logging_freq": 100,
-    "long_run_freq":10000,
+    "long_run_freq":1000,
     "reset":"True",
     "long_job":"True",
 
@@ -17,6 +17,7 @@
 
     "comment": "Model Name",
     "model":"NonlocalNet",
+    "n_f":128,
     "scaling":1,
 
     "comment": "optimizer",
@@ -29,30 +30,39 @@
     "sampler": "Langevin",
     "learnable_sampler":"False",
     "eps":1,
-    "MH":"False",
-    "adaptive":"False",
+    "MH":"True",
+    "adaptive":"True",
     "adaptive_threshold":0.65,
     "transition_steps":100,
 
     "comment": "Langevin Dynamics Parameters",
-    "init":"persistent",
-    "L":250,
-    "T":1.25e-5,
-    "Long_L":100,
+    "init":"data",
+    "L":200,
+    "L_data":150,
+    "L_noise":150,
+    "T":5e-3,
+    "T_data":5e-5,
+    "T_noise":5e-5,
+    "T_data_long":5e-5,
+    "T_noise_long":5e-5,
+    "Long_L":10000,
+    "LD_cosine_sampler":"False",
 
     "comment": "HMC",
     "Leapfrog_steps":1,
-    "HMC_steps":100,
+    "HMC_steps":500,
     "gamma":0.9,
     "mass":1,
     "HMC_steps_Long":10000,
 
     "comment": "loss function",
     "scale_loss":"False",
-    "combined_loss":"True",
-    "combined_loss_lambda": 1
-    
-
+    "combined_loss":"False",
+    "multi_noise": "False",
+    "randomized":"True",
+    "correction":"False",
+    "random_length": "False",
+    "combined_loss_lambda": 25
     
 }
 

@@ -2,6 +2,8 @@ import torch as t
 import torch
 import numpy as np
 import logging
+import math 
+
 
 
 def leapfrog(model, q, p, Leapfrog_steps, eps):  
@@ -114,13 +116,28 @@ def langevin_acceptance(x, x_star, grad, grad_star, model, eps, T):
     term2 = t.norm(x - x_star + eps * grad_star, dim=1) ** 2
     
     energy_diff = model(x)/T - model(x_star)/T
-
     ratio = (1 / (4 * eps * T)) * (term1 - term2) + energy_diff
     ratio = ratio.clamp(-1e2, 1e2)
     ratio = t.exp(ratio).clamp(0, 1).mean().item()
     
     return ratio 
+
+def correction_term(x, x_star, grad, grad_star, model, eps, T):
     
+    term1 = t.norm(x_star - x + eps * grad, dim=1) ** 2   
+    term2 = t.norm(x - x_star + eps * grad_star, dim=1) ** 2
+    
+    correction = (1 / (4 * eps * T)) * (term1 - term2)
+    
+    #print(correction.mean(), (model(x)/T - model(x_star)/T).mean().item())
+
+    return correction.detach()
+    
+def cosine_schedule(eta_min=0, eta_max=1, T=10):
+    return [
+        eta_min + (eta_max - eta_min) * (1 + math.cos(tt * math.pi / T)) / 2
+        for tt in range(T)
+    ]
 
 def sample_Langevin(x, model, config):
     
@@ -133,7 +150,12 @@ def sample_Langevin(x, model, config):
     adaptive_threshold = config['adaptive_threshold']
     transition_steps = config['transition_steps']
     ch = config['im_ch']
-
+    correction = config['correction']
+    
+    if "clamp" not in config:
+        clamp = "False"
+    else:
+        clamp = config['clamp']
     # Lists to store intermediate values
     acceptance_ratio = []  # List to track acceptance ratio across langevin iterations
     energy = []  # List to keep track of energy across langevin iterations
@@ -141,34 +163,48 @@ def sample_Langevin(x, model, config):
     transition = [] # List to keep of image transitions
 
     loss = t.tensor(0) #OPTIONAL USAGE Loss keeps track of loss involed with LD 
-
+    correction_factor = t.zeros(config['batch_size']).cuda()
+    x_init = x
+    
+    if not isinstance(config["T"], torch.Tensor):
+        T = torch.tensor(T)
+    if config["LD_cosine_sampler"] == "True":
+        eps = cosine_schedule(eta_max = T, T = L)
     for i in range(L):
-
-        x.requires_grad = True  # set gradient flag of x is true for Langevin 
-        grad = torch.autograd.grad(model(x).sum(), [x], create_graph=True)[0]
         accept = 0
-
         while accept == 0:
+            x.requires_grad = True  # set gradient flag of x is true for Langevin 
+            grad = torch.autograd.grad(model(x).sum(), [x], create_graph=True, retain_graph=False)[0]
             
-            x_star = x - eps*grad + t.sqrt(2 * eps * T)*t.randn_like(x)
-            grad_star = torch.autograd.grad(model(x_star).sum(), [x_star], create_graph=True)[0]
-
+            if config["LD_cosine_sampler"] == "True":
+                x_star = x - eps[i]*grad + t.sqrt(2 * eps[i] * 1)*t.randn_like(x)
+            else:
+                x_star = x - eps*grad + t.sqrt(2 * eps * T)*t.randn_like(x)
+            
+            if clamp == "True":
+                x_star = x_star.clamp(-1,1)
+            
+            if correction == "True":
+                grad_star = torch.autograd.grad(model(x_star).sum(), [x_star], create_graph=True, retain_graph=False)[0]
+                correction_factor = correction_factor + correction_term(x, x_star, grad, grad_star, model, eps, T)
+            
+            # if MH is False run unadjusted langevin 
             if MH == "False":
                 accept = 1
                 ratio = 1
             else:
+                grad_star = torch.autograd.grad(model(x_star).sum(), [x_star], create_graph=True, retain_graph=False)[0]
                 ratio = langevin_acceptance(x, x_star, grad, grad_star, model, eps, T)
                 accept = np.random.binomial(n=1, p=ratio)            
+                """
                 if adaptive == "True":
                     eps = adapt(curr_ratio=accept,
                                 threshold=adaptive_threshold,
                                 eps=eps)
-            
+                    print(eps)  
+                """          
             acceptance_ratio.append(ratio)
             
-        #lambd = 5
-        #loss = loss +  lambd**2/(ratio * ((x_star - x) ** 2).sum()) - ratio/lambd**2 * ((x_star - x) ** 2).sum()
-        #print(loss)
         x = x_star.detach().clone()
         x = x.detach().clone()
     
@@ -177,12 +213,18 @@ def sample_Langevin(x, model, config):
 
         if i % transition_steps == 0:
             transition.append(x.view(-1, ch, 32, 32))
-
+    
+    if correction == "True":
+        correction_factor = t.exp( - correction_factor - (model(x_init)/T).detach() + (model(x)/T).detach() )
+        correction_factor = 1/(1 + correction_factor)
+    
     intermediate_results = {"acceptance_ratio": acceptance_ratio,
                             "energy": energy,
                             "score": score,
                             "transition": transition,
-                            "loss": loss}
+                            "loss": loss,
+                            "correction_factor":correction_factor,
+                            "eps": eps}
     
     return x.detach(), intermediate_results
     

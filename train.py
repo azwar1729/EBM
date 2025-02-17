@@ -56,6 +56,8 @@ def train(root_path, resume_checkpoint=False):
     logger = utils.set_logger(root_path+"logging.log")
     config = utils.read_json(root_path+"config.json")
     
+    logger.info("STARTED ..........")
+    loss_arr = []
     ########################  Get Data ###################################
     if config['data'] == 'flowers':
         utils.download_flowers_data()
@@ -69,7 +71,14 @@ def train(root_path, resume_checkpoint=False):
                             tr.Normalize(tuple(0.5*t.ones(config['im_ch'])), 
                                          tuple(0.5*t.ones(config['im_ch'])))])
     # Collect all data and store in q variable
-    q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
+    #q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
+    if config['data'] == "lsun_church":
+            q = t.load( "/scratch/gilbreth/abdulsal/q_tensor.pt").cuda()
+    elif config['data'] == "lsun_bedroom":
+            q = t.load( "/scratch/gilbreth/abdulsal/q_tensor2.pt").cuda()
+    else:    
+            q = t.stack([x[0] for x in data[config['data']]('./data/' + config['data'], transform)]).cuda()
+   
     # Create bank for persistent chain 
     x_bank = t.randn_like(q)
     x_bank = x_bank.view(-1, config['im_ch']*config['im_sz']*config['im_sz'])
@@ -77,6 +86,7 @@ def train(root_path, resume_checkpoint=False):
     #################### Intialize model/Optimizer #######################
     
     model = getattr(models, config['model'])(n_c=config['im_ch'],
+                                             n_f=config['n_f'],
                                              scaling=config['scaling'])
     model = model.cuda()
     if config['optimizer'] == "adam":
@@ -96,6 +106,8 @@ def train(root_path, resume_checkpoint=False):
     ############################ Training #################################
     
     logger.info("Training Started ...")
+    loss_1_arr = []
+    loss_2_arr = []
     for ii in range(train_iter, config['num_train_iters']):
     #for ii,data in enumerate(tqdm(train_loader)):
         # Get training data, reshape and add noise
@@ -131,7 +143,7 @@ def train(root_path, resume_checkpoint=False):
         if config['combined_loss'] == "True":
             # Get samples init from data or persistent chain 
             if config['sampler'] == "Langevin": 
-                if config["L_data"] == config["L_noise"]:
+                if (config["L_data"] == config["L_noise"]) and (config["T_data"] == config["T_noise"]):
                     combined_x = torch.cat((x_init, torch.randn_like(x_init)), 0)
                     x_sample_combined, intermediate_results = sample_Langevin(combined_x, model, 
                                                                               dict(config,T=T,L=config['L_data']))
@@ -139,9 +151,15 @@ def train(root_path, resume_checkpoint=False):
                     x_sample_noise_init = x_sample_combined[config['batch_size']:]
                 else:
                     x_sample_noise_init, intermediate_results = sample_Langevin(torch.randn_like(x_init), model, 
-                                                                              dict(config,T=T,L=config['L_noise']))
-                    x_sample, intermediate_results = sample_Langevin(x_init, model, 
-                                                                    dict(config,T=T,L=config['L_data']))
+                                                                              dict(config,T=config["T_noise"],L=config['L_noise']))
+                    
+                    if config["random_length"] == True:
+                        L = random.randint(10, 2*config['L_data'])
+                        x_sample, intermediate_results = sample_Langevin(x_init, model, 
+                                                                    dict(config,T=config["T_data"],L=L))
+                    else:
+                        x_sample, intermediate_results = sample_Langevin(x_init, model, 
+                                                                    dict(config,T=config["T_data"],L=config['L_data']))
                                            
             elif config['sampler'] == "HMC":
                
@@ -152,47 +170,85 @@ def train(root_path, resume_checkpoint=False):
                                                                                                                     
             loss = config['combined_loss_lambda']*(model(x_data).mean() - model(x_sample).mean()) + \
              (model(x_data).mean() - model(x_sample_noise_init).mean()) 
-                                                               
+            
+        elif config['multi_noise'] == "True":
+            std_devs = np.geomspace(1, 0.01, 10)
+            dev = std_devs[random.randint(0,9)]
+            x_init = x_data + torch.randn_like(x_init) * dev
+            x_sample, intermediate_results = sample_Langevin(x_init, model, dict(config, T=T))
+            loss  = model(x_data).mean()  - model(x_sample).mean()
+            loss = loss/dev
+        elif config['randomized'] == "True":    
+            random_draw = np.random.binomial(n=1, p=0.95)
+            if random_draw == 1:
+                x_sample, intermediate_results = sample_Langevin(x_init, model, dict(config, T=T))
+            else:
+                x_sample, intermediate_results = sample_Langevin(torch.randn_like(x_init), model, dict(config, T=T))                                              
+            
+            loss = model(x_data).mean() - model(x_sample).mean()
+             
         else:
             if config['sampler'] == "Langevin":
-                x_sample, intermediate_results = sample_Langevin(x_init, model, dict(config, T=T))
+                x_sample, intermediate_results = sample_Langevin(x_init, model, dict(config, T=T, eps=eps))
 
             elif config['sampler'] == "HMC":
                 x_sample, intermediate_results = sample_HMC(x_init, model, config)
-                                                
-            loss = model(x_data).mean() - model(x_sample).mean()
+            
+            if config["correction"] == "True":
+                correction_factor = intermediate_results["correction_factor"]
+                loss = model(x_data) - model(x_sample)
+                logger.info(f"{correction_factor.shape}, {loss.shape}, {correction_factor.min()}, {correction_factor.max()}")
+                loss = loss * correction_factor   
+                loss = loss.mean() 
+            else:                             
+                loss = model(x_data).mean() - model(x_sample).mean()
+                
             if config['learnable_sampler'] == "True":
                 loss = loss + 1e-1 * intermediate_results["loss"]
              
         if config['scale_loss'] == "True" or isinstance(config["T"],str) is True:
             loss = loss / T
+        
         # If persistent then update the x_bank sample
         if config['init'] == "persistent":
             x_bank[pos] = x_sample.detach().clone()
+        # If adaptive eps adjust eps
+        if config["adaptive"] == True:
+            eps = utils.adapt(curr_ratio=np.array(intermediate_results['acceptance_ratio']).mean(),
+                              threshold=config['adaptive_threshold'],
+                              eps=eps)
+            
 
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         optimizer.step()
+        loss_arr.append(loss.item())
 
         for lr_gp in optimizer.param_groups:
             lr_gp['lr'] = max(config['lr_min'], lr_gp['lr'] * config['lr_decay'])
 
         logger.info(f"{ii},loss = {loss.sum().item()},Temperature = {T.item()}")
         logger.info(f"shortRun chain ---> maxVal={x_sample.max().item()}, minVal = {x_sample.min().item()}")
-        logger.info(f"eps = {eps}")
+        logger.info(f"eps = {intermediate_results['eps']}")
         #print(ii,loss.item(),T.item())
         #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
         
         if ii % config["logging_freq"] == 0:
             
             save_results(x_sample, intermediate_results, ii, config, root_path)
+            utils.plot_multiple_images(x_init.view(-1, config['im_ch'], config['im_sz'],
+                                             config['im_sz']), root_path + f"sampleInit_{ii}.png")
            
             torch.save({
               'iteration': ii,
               'model_state_dict': model.state_dict(),
               'optimizer_state_dict': optimizer.state_dict(),
-              }, root_path + f'state-{ii}.pth')
+              }, root_path + f'Tempstate-{ii}.pth')
+            
+            if os.path.exists(root_path + f'Tempstate-{ii}.pth'):
+            # Rename the temporary file to the final filename
+                os.rename(root_path + f'Tempstate-{ii}.pth', root_path + f'state-{ii}.pth')
             """
             torch.save({
               'iteration': ii,
@@ -200,8 +256,9 @@ def train(root_path, resume_checkpoint=False):
               'optimizer_state_dict': optimizer.state_dict(),
               }, root_path + f'/state.pth')
             """
+            np.save(root_path + f"loss_1_{ii}.npy", loss_arr)
             
-        if ii%config["long_run_freq"]==0:
+        if (ii+1)%config["long_run_freq"]==0:
             
             if config['sampler'] == "Langevin":
                 x_sample_data_init, intermediate_results_data = sample_Langevin(x_data, model,
@@ -219,6 +276,8 @@ def train(root_path, resume_checkpoint=False):
             
             save_results(x_sample_data_init, intermediate_results_data, ii, config,root_path, text="long_DataInit_")
             save_results(x_sample_noise_init, intermediate_results_noise, ii, config,root_path, text="long_NoiseInit_")
+            np.save(root_path + f"energyArrayDataLong_{ii}.npy", intermediate_results_data['energy'])
+            np.save(root_path + f"energyArrayNoiseLong_{ii}.npy", intermediate_results_noise['energy'])
 
             utils.tensors_to_gif(intermediate_results_data['transition'], int(config['batch_size']**0.5),
                                  gif_filename=root_path + f"transition_long_DataInit_{ii}.gif")
