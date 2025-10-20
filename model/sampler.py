@@ -148,7 +148,7 @@ def sample_Langevin(x, model, config):
     MH = config['MH']
     adaptive = config['adaptive']
     adaptive_threshold = config['adaptive_threshold']
-    transition_steps = config['transition_steps']
+    transition_steps = 100
     ch = config['im_ch']
     correction = config['correction']
     
@@ -172,6 +172,7 @@ def sample_Langevin(x, model, config):
         eps = cosine_schedule(eta_max = T, T = L)
     for i in range(L):
         accept = 0
+        cnt = 0
         while accept == 0:
             x.requires_grad = True  # set gradient flag of x is true for Langevin 
             grad = torch.autograd.grad(model(x).sum(), [x], create_graph=True, retain_graph=False)[0]
@@ -182,32 +183,30 @@ def sample_Langevin(x, model, config):
                 x_star = x - eps*grad + t.sqrt(2 * eps * T)*t.randn_like(x)
             
             if clamp == "True":
-                x_star = x_star.clamp(-1,1)
+                x_star = x_star.clamp(-2.5,2.5)
             
             if correction == "True":
                 grad_star = torch.autograd.grad(model(x_star).sum(), [x_star], create_graph=True, retain_graph=False)[0]
                 correction_factor = correction_factor + correction_term(x, x_star, grad, grad_star, model, eps, T)
             
             # if MH is False run unadjusted langevin 
-            if MH == "False":
+            if MH == "False" or config["max_MHstep"]<cnt:
                 accept = 1
                 ratio = 1
             else:
                 grad_star = torch.autograd.grad(model(x_star).sum(), [x_star], create_graph=True, retain_graph=False)[0]
                 ratio = langevin_acceptance(x, x_star, grad, grad_star, model, eps, T)
                 accept = np.random.binomial(n=1, p=ratio)            
-                """
                 if adaptive == "True":
-                    eps = adapt(curr_ratio=accept,
+                    eps = adapt(curr_ratio=ratio,
                                 threshold=adaptive_threshold,
                                 eps=eps)
-                    print(eps)  
-                """          
+                    #print(f"eps = {eps}, ratio = {ratio}, threshold = {adaptive_threshold}, accept = {accept}")           
             acceptance_ratio.append(ratio)
+            cnt = cnt+1
             
         x = x_star.detach().clone()
         x = x.detach().clone()
-    
         energy.append(model(x).mean().item())
         score.append((grad**2).sum(axis=1).mean().item())  
 
